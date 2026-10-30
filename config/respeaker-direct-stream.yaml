@@ -1,0 +1,74 @@
+# Temporary USB/Improv firmware profile for the direct RAG voice-stream test.
+# The normal satellite configuration and its firmware remain unchanged.
+
+substitutions:
+  respeaker_lite_ref: 2026.10.3
+
+packages:
+  respeaker_satellite: !include common/respeaker-satellite-base.yaml
+
+esphome:
+  name: respeaker-direct-stream
+  friendly_name: ReSpeaker Direct Stream Test
+
+wifi:
+  on_connect:
+    - delay: 5s
+    - ble.disable:
+    - script.execute: control_leds
+
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components
+    components: [direct_voice_stream]
+
+direct_voice_stream:
+  id: rag_voice_stream
+  microphone: i2s_mics
+  url: ws://192.168.1.5:8000/agent/voice/stream
+  on_error:
+    - logger.log:
+        format: "Voice stream failed: %s"
+        args: ["message.c_str()"]
+
+binary_sensor:
+  - id: !extend user_button
+    on_multi_click: !remove
+    on_press:
+      - if:
+          condition:
+            lambda: return !id(improv_ble_in_progress) && id(wifi_id).is_connected();
+          then:
+            - direct_voice_stream.start: rag_voice_stream
+          else:
+            - logger.log: "Connect to Wi-Fi before starting a voice stream."
+    on_release:
+      - direct_voice_stream.stop: rag_voice_stream
+
+voice_assistant:
+  # Keep the entity available for the supporting satellite packages, but do
+  # not start wake-word capture in parallel with the direct microphone stream.
+  on_client_connected:
+    - lambda: id(init_in_progress) = false;
+    - script.execute: control_leds
+
+ota:
+  - platform: esphome
+    id: ota_esphome
+
+improv_serial:
+
+esp32_ble:
+
+improv_ble:
+  authorizer: user_button
+  on_start:
+    - lambda: id(improv_ble_in_progress) = true;
+    - script.execute: control_leds
+  on_provisioned:
+    - lambda: id(improv_ble_in_progress) = false;
+    - script.execute: control_leds
+  on_stop:
+    - lambda: id(improv_ble_in_progress) = false;
+    - script.execute: control_leds

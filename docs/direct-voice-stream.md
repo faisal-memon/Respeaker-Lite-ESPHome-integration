@@ -20,7 +20,32 @@ the endpoint can accept production voice requests.
 
 ## Add it to a local test configuration
 
-Point ESPHome at the checked-out component while developing it:
+Use `config/respeaker-direct-stream.yaml` for the isolated test firmware. It
+uses Improv over BLE or USB serial for Wi-Fi provisioning, and its push-to-talk
+button sends microphone audio to the 3090 on the home LAN. Normal button
+gestures and automatic wake-word listening are disabled in this test profile.
+
+The endpoint acknowledges a valid recording after it has received all PCM
+frames. It does not transcribe the audio or ask the agent yet; this profile is
+for validating the microphone-to-server transport first.
+
+To build and flash it over USB:
+
+```sh
+esphome run config/respeaker-direct-stream.yaml
+```
+
+The custom component uses the local checkout so changes to its C++ source are
+included in the build. The ordinary factory and dashboard profiles are
+unchanged.
+
+The profile's LAN endpoint is intentionally configured for the 3090 host. For
+this prototype, the API port is bound directly to the 3090's LAN address. That
+makes the other API routes reachable from devices on the same LAN too. The
+public agent proxy must continue to deny this WebSocket path.
+
+For a minimal custom config, point ESPHome at the checked-out component while
+developing it:
 
 ```yaml
 external_components:

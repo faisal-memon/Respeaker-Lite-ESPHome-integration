@@ -55,6 +55,8 @@ void DirectVoiceStream::start() {
   this->end_requested_ = false;
   this->protocol_started_ = false;
   this->awaiting_ready_ = false;
+  this->awaiting_completion_ = false;
+  this->disconnected_ = false;
   this->limit_reached_ = false;
   this->closing_expected_ = false;
   this->queued_bytes_ = 0;
@@ -91,6 +93,19 @@ void DirectVoiceStream::connect_() {
 }
 
 void DirectVoiceStream::loop() {
+  if (this->disconnected_.exchange(false)) {
+    if (this->websocket_ != nullptr) {
+      esp_websocket_client_destroy(this->websocket_);
+      this->websocket_ = nullptr;
+    }
+    this->start_requested_ = false;
+    this->end_requested_ = false;
+    this->protocol_started_ = false;
+    this->awaiting_ready_ = false;
+    this->awaiting_completion_ = false;
+    this->closing_expected_ = false;
+    return;
+  }
   if (!this->websocket_connected_())
     return;
   if (this->limit_reached_ && this->capture_active_)
@@ -118,13 +133,18 @@ void DirectVoiceStream::handle_websocket_event_(int32_t event_id, void *event_da
   }
   if (event_id == WEBSOCKET_EVENT_DATA) {
     auto *data = static_cast<esp_websocket_event_data_t *>(event_data);
-    if (this->awaiting_ready_ && data->op_code == WS_TRANSPORT_OPCODES_TEXT) {
+    if (data->op_code == WS_TRANSPORT_OPCODES_TEXT) {
       std::string message(data->data_ptr, data->data_len);
-      if (message.find("\"type\":\"ready\"") != std::string::npos) {
+      if (this->awaiting_ready_ && message.find("\"type\":\"ready\"") != std::string::npos) {
         this->awaiting_ready_ = false;
         this->start_capture_();
       } else if (message.find("\"type\":\"error\"") != std::string::npos) {
         this->fail_("Voice receiver rejected the stream start message");
+      } else if (this->awaiting_completion_ && message.find("\"type\":\"complete\"") != std::string::npos) {
+        this->awaiting_completion_ = false;
+        this->start_requested_ = false;
+        this->closing_expected_ = true;
+        ESP_LOGI(TAG, "Voice receiver accepted the completed audio stream");
       }
     }
     return;
@@ -132,11 +152,7 @@ void DirectVoiceStream::handle_websocket_event_(int32_t event_id, void *event_da
   if (event_id == WEBSOCKET_EVENT_DISCONNECTED) {
     if (!this->closing_expected_ && (this->capture_active_ || this->start_requested_))
       this->fail_("Voice receiver disconnected before the stream completed");
-    this->capture_active_ = false;
-    this->start_requested_ = false;
-    this->end_requested_ = false;
-    this->protocol_started_ = false;
-    this->awaiting_ready_ = false;
+    this->disconnected_ = true;
     return;
   }
   if (event_id == WEBSOCKET_EVENT_ERROR) {
@@ -188,16 +204,15 @@ void DirectVoiceStream::drain_audio_() {
 
 void DirectVoiceStream::finish_stream_() {
   const char *end = "{\"type\":\"end\"}";
-  esp_websocket_client_send_text(this->websocket_, end, strlen(end), pdMS_TO_TICKS(1000));
+  if (esp_websocket_client_send_text(this->websocket_, end, strlen(end), pdMS_TO_TICKS(1000)) < 0) {
+    this->fail_("Could not send the stream end message");
+    this->closing_expected_ = true;
+    esp_websocket_client_stop(this->websocket_);
+    return;
+  }
   ESP_LOGI(TAG, "Finished voice stream; dropped %lu bytes", static_cast<unsigned long>(this->dropped_bytes_.load()));
   this->end_requested_ = false;
-  this->start_requested_ = false;
-  this->capture_active_ = false;
-  this->protocol_started_ = false;
-  this->closing_expected_ = true;
-  esp_websocket_client_stop(this->websocket_);
-  esp_websocket_client_destroy(this->websocket_);
-  this->websocket_ = nullptr;
+  this->awaiting_completion_ = true;
 }
 
 bool DirectVoiceStream::websocket_connected_() const {
