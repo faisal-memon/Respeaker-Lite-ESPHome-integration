@@ -26,7 +26,7 @@ external_components:
 direct_voice_stream:
   id: rag_voice_stream
   microphone: i2s_mics
-  url: ws://192.168.1.5:8000/agent/voice/stream
+  url: ws://192.168.1.5:8001/agent/voice/stream
   on_error:
     - logger.log:
         format: "Voice stream failed: %s"
