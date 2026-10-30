@@ -56,6 +56,7 @@ void DirectVoiceStream::start() {
   this->protocol_started_ = false;
   this->awaiting_ready_ = false;
   this->awaiting_completion_ = false;
+  this->abort_requested_ = false;
   this->disconnected_ = false;
   this->limit_reached_ = false;
   this->closing_expected_ = false;
@@ -67,8 +68,16 @@ void DirectVoiceStream::start() {
 }
 
 void DirectVoiceStream::stop() {
-  if (!this->capture_active_)
+  if (!this->capture_active_) {
+    // The button can be released while the WebSocket handshake is still in
+    // progress. Remember that release so start_capture_() doesn't start a
+    // recording after the user has already let go of the button.
+    if (this->start_requested_) {
+      ESP_LOGD(TAG, "Button released before the voice receiver was ready");
+      this->end_requested_ = true;
+    }
     return;
+  }
   this->microphone_source_->stop();
   this->capture_active_ = false;
   this->end_requested_ = true;
@@ -103,7 +112,13 @@ void DirectVoiceStream::loop() {
     this->protocol_started_ = false;
     this->awaiting_ready_ = false;
     this->awaiting_completion_ = false;
+    this->abort_requested_ = false;
     this->closing_expected_ = false;
+    return;
+  }
+  if (this->abort_requested_.exchange(false) && this->websocket_ != nullptr) {
+    this->closing_expected_ = true;
+    esp_websocket_client_stop(this->websocket_);
     return;
   }
   if (!this->websocket_connected_())
@@ -111,7 +126,10 @@ void DirectVoiceStream::loop() {
   if (this->limit_reached_ && this->capture_active_)
     this->stop();
   this->drain_audio_();
-  if (this->end_requested_ && uxQueueMessagesWaiting(this->pcm_queue_) == 0) {
+  // Do not send the end frame until the receiver has replied "ready" and
+  // capture has actually started. If the button is released during the
+  // handshake, the ready handler cancels the empty session instead.
+  if (this->protocol_started_ && this->end_requested_ && uxQueueMessagesWaiting(this->pcm_queue_) == 0) {
     this->finish_stream_();
   }
 }
@@ -137,9 +155,18 @@ void DirectVoiceStream::handle_websocket_event_(int32_t event_id, void *event_da
       std::string message(data->data_ptr, data->data_len);
       if (this->awaiting_ready_ && message.find("\"type\":\"ready\"") != std::string::npos) {
         this->awaiting_ready_ = false;
+        if (this->end_requested_) {
+          // The user released the button before the receiver completed its
+          // handshake. Close this empty session; disconnected_ lets loop()
+          // reclaim the client and reset all per-stream state.
+          ESP_LOGI(TAG, "Button was released before recording began; cancelling voice stream");
+          this->abort_requested_ = true;
+          return;
+        }
         this->start_capture_();
       } else if (message.find("\"type\":\"error\"") != std::string::npos) {
-        this->fail_("Voice receiver rejected the stream start message");
+        this->fail_("Voice receiver rejected the stream");
+        this->abort_requested_ = true;
       } else if (this->awaiting_completion_ && message.find("\"type\":\"complete\"") != std::string::npos) {
         this->awaiting_completion_ = false;
         this->start_requested_ = false;
@@ -157,6 +184,7 @@ void DirectVoiceStream::handle_websocket_event_(int32_t event_id, void *event_da
   }
   if (event_id == WEBSOCKET_EVENT_ERROR) {
     this->fail_("WebSocket transport error");
+    this->abort_requested_ = true;
   }
 }
 

@@ -36,6 +36,7 @@ binary_sensor:
   - id: !extend user_button
     on_multi_click: !remove
     on_press:
+      - logger.log: "USR button pressed; starting voice stream."
       - if:
           condition:
             lambda: return !id(improv_ble_in_progress) && id(wifi_id).is_connected();
@@ -44,6 +45,7 @@ binary_sensor:
           else:
             - logger.log: "Connect to Wi-Fi before starting a voice stream."
     on_release:
+      - logger.log: "USR button released; stopping voice stream."
       - direct_voice_stream.stop: rag_voice_stream
 
 voice_assistant:

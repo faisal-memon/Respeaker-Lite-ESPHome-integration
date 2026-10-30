@@ -26,8 +26,9 @@ button sends microphone audio to the 3090 on the home LAN. Normal button
 gestures and automatic wake-word listening are disabled in this test profile.
 
 The endpoint acknowledges a valid recording after it has received all PCM
-frames. It does not transcribe the audio or ask the agent yet; this profile is
-for validating the microphone-to-server transport first.
+frames, then sends the in-memory WAV to the 3090's local `whisper.cpp` service.
+The transcript is written to the `rag-voice` container log. The recording is
+not saved, and the transcript is not sent to the agent or shown in chat.
 
 To build and flash it over USB:
 
@@ -74,4 +75,3 @@ binary_sensor:
 
 Use this only in a direct-audio profile. The standard satellite configuration
 already assigns the button and microphone to Home Assistant's voice assistant.
-The next change will add that profile without changing the existing one.

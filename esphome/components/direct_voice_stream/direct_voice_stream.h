@@ -76,6 +76,7 @@ class DirectVoiceStream : public Component {
   std::atomic_bool protocol_started_{false};
   std::atomic_bool awaiting_ready_{false};
   std::atomic_bool awaiting_completion_{false};
+  std::atomic_bool abort_requested_{false};
   std::atomic_bool disconnected_{false};
   std::atomic_bool limit_reached_{false};
   std::atomic_bool closing_expected_{false};
